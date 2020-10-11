@@ -3,6 +3,7 @@ import argparse
 
 import numpy as np
 
+
 class MultiArmedBandits():
     def __init__(self, bandits, seed=None):
         self._generator = np.random.RandomState(seed)
@@ -21,43 +22,42 @@ class MultiArmedBandits():
 
 
 parser = argparse.ArgumentParser()
-# These arguments will be set appropriately by ReCodEx, even if you change them.
-parser.add_argument("--alpha", default=0, type=float, help="Learning rate to use or 0 for averaging.")
+parser.add_argument("--alpha", default=0.1, type=float, help="Learning rate to use or 0 for averaging.")
 parser.add_argument("--bandits", default=10, type=int, help="Number of bandits.")
 parser.add_argument("--episode_length", default=1000, type=int, help="Number of trials per episode.")
-parser.add_argument("--episodes", default=100, type=int, help="Episodes to perform.")
-parser.add_argument("--epsilon", default=0.1, type=float, help="Exploration factor (if applicable).")
-parser.add_argument("--initial", default=0, type=float, help="Initial estimation of values.")
+parser.add_argument("--episodes", default=10000, type=int, help="Episodes to perform.")
+parser.add_argument("--epsilon", default=0, type=float, help="Exploration factor (if applicable).")
+parser.add_argument("--initial", default=1, type=float, help="Initial estimation of values.")
 parser.add_argument("--recodex", default=False, action="store_true", help="Running in ReCodEx")
-parser.add_argument("--seed", default=42, type=int, help="Random seed.")
-# If you add more arguments, ReCodEx will keep them with your default values.
+parser.add_argument("--seed", default=None, type=int, help="Random seed.")
+
 
 def main(env, args):
-    # TODO: Initialize the estimates, to `args.initial`.
+    # Fix random seed
+    np.random.seed(args.seed)
+
+    Q = [args.initial for i in range(args.bandits)]
+    N = [0 for i in range(args.bandits)]
 
     rewards = 0
     for step in range(args.episode_length):
-        # TODO: Select an action according to `env.greedy(args.epsilon)`.
-        action = None
+        action = np.argmax(Q) if env.greedy(args.epsilon) else np.random.randint(args.bandits)
+        N[action] += 1
 
-        # Perform it
         reward = env.step(action)
         rewards += reward
 
-        # TODO: Update parameters, either using averaging (when `args.alpha` == 0)
-        # or by an update with a learning rate of `args.alpha`.
-
+        factor = args.alpha if args.alpha != 0 else 1 / N[action]
+        Q[action] += factor * (reward - Q[action])
 
     return rewards / args.episode_length
 
+
 if __name__ == "__main__":
-    args = parser.parse_args([] if "__file__" not in globals() else None)
+    args = parser.parse_args()
 
     # Create the environment
     env = MultiArmedBandits(args.bandits, seed=args.seed)
-
-    # Fix random seed
-    np.random.seed(args.seed)
 
     returns = []
     for _ in range(args.episodes):
