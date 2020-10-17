@@ -3,8 +3,6 @@ import argparse
 
 import numpy as np
 
-C_ACCURACY = 0.000005
-
 
 # Print results
 def plot(value_function, policy):
@@ -62,29 +60,19 @@ parser.add_argument("--steps", default=10, type=int, help="Number of policy eval
 # If you add more arguments, ReCodEx will keep them with your default values.
 
 def main(args):
-    # Start with zero value function and "go North" policy
     V = [0] * GridWorld.states
     V_update = [0] * GridWorld.states
     policy = [0] * GridWorld.states
 
-    policy_stable = False
-    while not policy_stable:
-        # for _ in range(args.steps):
-        delta = np.inf
-        while delta > C_ACCURACY:
-            delta = 0
+    for _ in range(args.steps):
+        for _ in range(args.iterations):
             for state in range(GridWorld.states):
                 V_update[state] = sum(p * (r + args.gamma * V[s]) for p, r, s in GridWorld.step(state, policy[state]))
-                delta = max(delta, abs(V[state] - V_update[state]))
             V = V_update[:]
 
-        policy_stable = True
         for state in range(GridWorld.states):
-            old_action = policy[state]
             policy[state] = np.argmax([sum(p * (r + args.gamma * V[s]) for p, r, s in GridWorld.step(state, action))
                                        for action in range(GridWorld.actions)])
-            if old_action != policy[state]:
-                policy_stable = False
 
     return V, policy
 
