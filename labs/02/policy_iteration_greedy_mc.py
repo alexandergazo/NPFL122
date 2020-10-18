@@ -3,6 +3,7 @@ import argparse
 
 import numpy as np
 
+
 class GridWorld:
     # States in the gridworld are the following:
     # 0 1 2 3
@@ -14,8 +15,8 @@ class GridWorld:
     # Actions are ↑ → ↓ ←; with probability 80% they are performed as requested,
     # with 10% move 90° CCW is performed, with 10% move 90° CW is performed.
     states = 11
-
-    actions = ["↑", "→", "↓", "←"]
+    actions = 4
+    actions_graphics = ["↑", "→", "↓", "←"]
 
     def __init__(self, seed):
         self._generator = np.random.RandomState(seed)
@@ -28,7 +29,7 @@ class GridWorld:
 
     def epsilon_greedy(self, epsilon, greedy_action):
         if self._generator.uniform() < epsilon:
-            return self._generator.randint(len(self.actions))
+            return self._generator.randint(len(self.actions_graphics))
         return greedy_action
 
     @staticmethod
@@ -38,10 +39,11 @@ class GridWorld:
         offset_x = -1 if action == 3 else action == 1
         offset_y = -1 if action == 0 else action == 2
         new_x, new_y = x + offset_x, y + offset_y
-        if not(new_x >= 4 or new_x < 0  or new_y >= 3 or new_y < 0 or (new_x == 1 and new_y == 1)):
+        if not (new_x >= 4 or new_x < 0 or new_y >= 3 or new_y < 0 or (new_x == 1 and new_y == 1)):
             state = new_x + 4 * new_y
         if state >= 5: state -= 1
         return (+1 if state == 10 else -100 if state == 6 else 0, state)
+
 
 parser = argparse.ArgumentParser()
 # These arguments will be set appropriately by ReCodEx, even if you change them.
@@ -51,38 +53,42 @@ parser.add_argument("--mc_length", default=100, type=int, help="Monte Carlo simu
 parser.add_argument("--recodex", default=False, action="store_true", help="Running in ReCodEx")
 parser.add_argument("--seed", default=None, type=int, help="Random seed.")
 parser.add_argument("--steps", default=10, type=int, help="Number of policy evaluation/improvements to perform.")
+
+
 # If you add more arguments, ReCodEx will keep them with your default values.
+
 
 def main(args):
     env = GridWorld(args.seed)
 
-    # Start with zero action-value function and "go North" policy
-    action_value_function = np.zeros((env.states, len(env.actions)))
+    Q = np.zeros((env.states, env.actions))
     policy = np.zeros(env.states, np.int32)
+    returns = [[[] for _ in range(env.actions)] for _ in range(env.states)]
 
-    # TODO: Implement a variant of policy iteration algorithm, with
-    # `args.steps` steps of policy evaluation/policy improvement. During policy
-    # evaluation, estimate action-value function by Monte Carlo simulation:
-    # - for state in range(env.states):
-    #   - start in a given state
-    #   - perform `args.mc_length` Monte Carlo steps, utilizing
-    #     epsilon-greedy actions with respect to the policy, using
-    #     `env.epsilon_greedy(args.epsilon, greedy_action)`
-    #     - this metod returns a random action with probability `args.epsilon`
-    #     - otherwise it returns the passed `greedy_action`
-    #     - for replicability, make sure to call it exactly `args.mc_length`
-    #       times in every simulation
-    #   - compute the return of the simulation
-    #   - update the estimate using averaging (across the previous steps),
-    #     but only for the first state-action pair (and only its first occurrence)
-    # During the policy improvement, if multiple actions have the same estimate,
-    # choose the one with the smaller index.
+    for _ in range(args.steps):
+        for state in range(env.states):
+            s = state
+            rewards = []
+            first_action = None
+            for _ in range(args.mc_length):
+                action = env.epsilon_greedy(args.epsilon, policy[s])
+                if first_action is None:
+                    first_action = action
+                reward, s = env.step(s, action)
+                rewards.append(reward)
 
-    # TODO: Compute `value_function` by taking the value from
-    # `action_value_function` according to the computed policy.
-    value_function = None
+            G = 0
+            for reward in reversed(rewards):
+                G = args.gamma * G + reward
+            returns[state][first_action].append(G)
+            Q[state, first_action] = np.mean(returns[state][first_action])
 
+        for state in range(env.states):
+            policy[state] = np.argmax(Q[state, :])
+
+    value_function = [Q[state, policy[state]] for state in range(env.states)]
     return value_function, policy
+
 
 if __name__ == "__main__":
     args = parser.parse_args([] if "__file__" not in globals() else None)
@@ -94,5 +100,5 @@ if __name__ == "__main__":
             state = l * 4 + c
             if state >= 5: state -= 1
             print("        " if l == 1 and c == 1 else "{:-8.2f}".format(value_function[state]), end="")
-            print(" " if l == 1 and c == 1 else GridWorld.actions[policy[state]], end="")
+            print(" " if l == 1 and c == 1 else GridWorld.actions_graphics[policy[state]], end="")
         print()
