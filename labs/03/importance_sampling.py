@@ -6,10 +6,12 @@ import numpy as np
 
 parser = argparse.ArgumentParser()
 # These arguments will be set appropriately by ReCodEx, even if you change them.
-parser.add_argument("--episodes", default=1000, type=int, help="Training episodes.")
+parser.add_argument("--episodes", default=500, type=int, help="Training episodes.")
 parser.add_argument("--recodex", default=False, action="store_true", help="Running in ReCodEx")
 parser.add_argument("--seed", default=42, type=int, help="Random seed.")
 # If you add more arguments, ReCodEx will keep them with your default values.
+parser.add_argument("--gamma", default=1, type=float, help="Discount factor.")
+
 
 def main(args):
     # Create the environment
@@ -25,7 +27,7 @@ def main(args):
     V = np.zeros(env.observation_space.n)
     C = np.zeros(env.observation_space.n)
 
-    for _ in range(args.episodes):
+    for i in range(args.episodes):
         state, done = env.reset(), False
 
         # Generate episode
@@ -36,9 +38,17 @@ def main(args):
             episode.append((state, action, reward))
             state = next_state
 
-        # TODO: Update V using weighted importance sampling.
+        G, W = 0, 1
+        for state, action, reward in reversed(episode):
+            W *= env.action_space.n / 2 if 1 <= action <= 2 else 0
+            if W == 0:
+                break
+            G = args.gamma * G + reward
+            C[state] += W
+            V[state] += W / C[state] * (G - V[state])
 
     return V
+
 
 if __name__ == "__main__":
     args = parser.parse_args([] if "__file__" not in globals() else None)
