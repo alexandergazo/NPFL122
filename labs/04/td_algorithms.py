@@ -17,7 +17,27 @@ parser.add_argument("--n", default=1, type=int, help="Use n-step method.")
 parser.add_argument("--off_policy", default=False, action="store_true", help="Off-policy; use greedy as target")
 parser.add_argument("--recodex", default=False, action="store_true", help="Running in ReCodEx")
 parser.add_argument("--seed", default=42, type=int, help="Random seed.")
+
+
 # If you add more arguments, ReCodEx will keep them with your default values.
+class RemainderList:
+    def __init__(self, n):
+        self._n = n
+        self._list = [None] * (self._n + 1)
+
+    def __getitem__(self, item):
+        return self._list[item % (self._n + 1)]
+
+    def __setitem__(self, key, value):
+        self._list[key % (self._n + 1)] = value
+
+    def __str__(self):
+        return str(self._list)
+
+
+def acts(env):
+    return range(env.action_space.n)
+
 
 def main(args):
     # Create the environment
@@ -29,51 +49,59 @@ def main(args):
     Q = np.zeros((env.observation_space.n, env.action_space.n))
 
     for _ in range(args.episodes):
-        next_state, done = env.reset(), False
+        t, T, S, A, R = 0, np.inf, RemainderList(args.n), RemainderList(args.n), RemainderList(args.n)
+        b = RemainderList(args.n)
+        S[0], done = env.reset(), False
+        A[0] = env.action_space.sample() if generator.uniform() < args.epsilon else Q[S[0]].argmax()
+        b[0] = args.epsilon / env.action_space.n + (1 - args.epsilon) * (A[0] == Q[S[0]].argmax())
+        while True:
+            if t < T:
+                S[t + 1], R[t + 1], done, _ = env.step(A[t])
+                if not done:
+                    A[t + 1] = env.action_space.sample() if generator.uniform() < args.epsilon else Q[S[t + 1]].argmax()
+                    b[t + 1] = args.epsilon / env.action_space.n + (1 - args.epsilon) * (
+                            A[t + 1] == Q[S[t + 1]].argmax())
+                else:
+                    T = t + 1
+                pi = np.eye(env.action_space.n)[Q.argmax(axis=1)]
+                if not args.off_policy:
+                    pi = (1 - args.epsilon) * pi + args.epsilon / env.action_space.n * np.ones_like(pi)
 
-        # Generate episode and update Q using the given TD method
-        next_action = np.argmax(Q[next_state]) if generator.uniform() >= args.epsilon else env.action_space.sample()
-        next_action_prob = args.epsilon / env.action_space.n + (1 - args.epsilon) * (next_action == np.argmax(Q[next_state]))
-        while not done:
-            action, action_prob, state = next_action, next_action_prob, next_state
-            next_state, reward, done, _ = env.step(action)
-            if not done:
-                next_action = np.argmax(Q[next_state]) if generator.uniform() >= args.epsilon else env.action_space.sample()
-                next_action_prob = args.epsilon / env.action_space.n + (1 - args.epsilon) * (next_action == np.argmax(Q[next_state]))
+            tau = t + 1 - args.n
+            if tau >= 0:
+                if args.mode == 'tree_backup':
+                    if t + 1 >= T:
+                        G = R[T]
+                    else:
+                        G = R[t + 1] + args.gamma * (pi[S[t + 1]].T @ Q[S[t + 1]])
+                    k = min(t, T - 1)
+                    while k >= tau + 1:
+                        G = R[k] + args.gamma * sum(pi[S[k], a] * (G if A[k] == a else Q[S[k], a]) for a in acts(env))
+                        k -= 1
+                    Q[S[tau], A[tau]] += args.alpha * (G - Q[S[tau], A[tau]])
+                else:
+                    if args.off_policy:
+                        if args.mode == 'sarsa':
+                            r = range(tau + 1, min(tau + args.n, T - 1) + 1)
+                        elif args.mode == 'expected_sarsa':
+                            r = range(tau + 1, min(tau + args.n, T))
+                        rho = np.prod([pi[S[i], A[i]] / b[i] for i in r])
+                    else:
+                        rho = 1
+                    G = sum(args.gamma ** (i - tau - 1) * R[i] for i in range(tau + 1, min(tau + args.n, T) + 1))
+                    if args.mode == 'sarsa':
+                        bootstrapped_value = Q[S[tau + args.n], A[tau + args.n]]
+                    elif args.mode == 'expected_sarsa':
+                        bootstrapped_value = pi[S[tau + args.n]].T @ Q[S[tau + args.n]]
+                    if tau + args.n < T:
+                        G += args.gamma ** args.n * bootstrapped_value
+                    Q[S[tau], A[tau]] += args.alpha * rho * (G - Q[S[tau], A[tau]])
 
-            target_policy = np.eye(env.action_space.n)[np.argmax(Q, axis=1)]
-            if not args.off_policy:
-                target_policy = (1 - args.epsilon) * target_policy + args.epsilon / env.action_space.n * np.ones_like(target_policy)
-
-            # TODO: Perform the update to the state-action value function `Q`, using
-            # a TD update with the following parameters:
-            # - `args.n`: use `args.n`-step method
-            # - `args.off_policy`:
-            #    - if False, the epsilon-greedy behaviour policy is also the target policy
-            #    - if True, the target policy is the greedy policy
-            #      - for SARSA (with any `args.n`) and expected SARSA (with `args.n` > 1),
-            #        importance sampling must be used
-            # - `args.mode`: this argument can have the following values:
-            #   - "sarsa": regular SARSA algorithm
-            #   - "expected_sarsa": expected SARSA algorithm
-            #   - "tree_backup": tree backup algorithm
-            #
-            # Perform the updates as soon as you can -- whenever you have all the information
-            # to update `Q[state, action]`, do it. For each `action` use its corresponding
-            # `action_prob` at the time of taking the `action` as the behaviour policy action
-            # probability, and current `target_policy` as the target policy (everywhere
-            # in the update).
-            #
-            # Do not forget that when `done` is True, bootstrapping on the
-            # `next_state` is not used.
-            #
-            # Also note that when the episode ends and `args.n` > 1, there will
-            # be several state-action pairs that also need to be updated. Perform
-            # the updates in the order in which you encountered the state-action
-            # pairs and during these updates, use the `target_policy` computed
-            # above (do not modify it during these post-episode updates).
-
+            if tau == T - 1:
+                break
+            t += 1
     return Q
+
 
 if __name__ == "__main__":
     args = parser.parse_args([] if "__file__" not in globals() else None)
