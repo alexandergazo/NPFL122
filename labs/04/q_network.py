@@ -28,10 +28,10 @@ parser.add_argument("--epsilon_final_at", default=70, type=int, help="Training e
 parser.add_argument("--gamma", default=0.99, type=float, help="Discounting factor.")
 parser.add_argument("--hidden_layer_size", default=48, type=int, help="Size of hidden layer.")
 parser.add_argument("--learning_rate", default=None, type=float, help="Learning rate.")
-parser.add_argument("--target_update_freq", default=None, type=int, help="Target update frequency.")
-parser.add_argument("--buffer_update_size", default=10, type=int, help="Nah..")
-parser.add_argument("--model_path", default="q_network_model.h5", type=str, help="Nah2..")
-parser.add_argument("--episodes", default=500, type=int, help="Nah3..")
+parser.add_argument("--target_update_freq", default=20, type=int, help="Target update frequency.")
+parser.add_argument("--buffer_update_size", default=10, type=int, help="Minimal buffer size for sampling.")
+parser.add_argument("--model_path", default="q_network_model.h5", type=str, help="Path to trained model.")
+parser.add_argument("--episodes", default=500, type=int, help="Number of training episodes.")
 
 
 class Network:
@@ -68,6 +68,9 @@ class Network:
     def predict(self, states):
         return self._model(states)
 
+    def get_q(self, state):
+        return self.predict(np.asarray([state], np.float32))[0]
+
     # If you want to use target network, the following method copies weights from
     # a given Network to the current one.
     @tf.function
@@ -77,31 +80,31 @@ class Network:
 
 
 def main(env, args):
-    def get_q(state):
-        return network.predict(np.asarray([state], np.float32))[0]
-
-    if args.model_path is None:
+    if os.path.isfile(args.model_path):
+        target_network = Network(env, args, tf.keras.models.load_model(args.model_path))
+    else:
         np.random.seed(args.seed)
         tf.random.set_seed(args.seed)
         tf.config.threading.set_inter_op_parallelism_threads(args.threads)
         tf.config.threading.set_intra_op_parallelism_threads(args.threads)
 
         network = Network(env, args)
+        target_network = Network(env, args)
+        target_network.copy_weights_from(network)
 
         # Replay memory; maxlen parameter can be passed to deque for a size limit,
         # which we however do not need in this simple task.
         replay_buffer = collections.deque()
         Transition = collections.namedtuple("Transition", ["state", "action", "reward", "done", "next_state"])
 
-        epsilon = args.epsilon
+        epsilon, step = args.epsilon, 0
         for _ in range(args.episodes):
             state, done = env.reset(), False
             while not done:
                 if args.render_each and env.episode > 0 and env.episode % args.render_each == 0:
                     env.render()
 
-                action = env.action_space.sample() if np.random.uniform() < epsilon else np.argmax(get_q(state))
-
+                action = env.action_space.sample() if np.random.uniform() < epsilon else np.argmax(network.get_q(state))
                 next_state, reward, done, _ = env.step(action)
 
                 replay_buffer.append(Transition(state, action, reward, done, next_state))
@@ -110,25 +113,27 @@ def main(env, args):
                     transitions = random.sample(replay_buffer, args.batch_size)
                     states = np.asarray([t.state for t in transitions])
                     q_values = network.predict(states).numpy()
-                    targets = [t.reward + (1 - t.done) * args.gamma * np.max(get_q(t.next_state)) for t in transitions]
+                    targets = [t.reward + (1 - t.done) * args.gamma * np.max(target_network.get_q(t.next_state)) \
+                               for t in transitions]
                     actions = [t.action for t in transitions]
                     q_values[np.arange(len(actions)), actions] = targets
                     network.train(states, q_values)
 
+                step = (step + 1) % args.target_update_freq
+                if step == 0:
+                    target_network.copy_weights_from(network)
                 state = next_state
 
             if args.epsilon_final_at:
                 epsilon = np.interp(env.episode + 1, [0, args.epsilon_final_at], [args.epsilon, args.epsilon_final])
 
-        network._model.save("q_network_model.h5")
-    else:
-        network = Network(env, args, tf.keras.models.load_model(args.model_path))
+        network._model.save(args.model_path)
 
     # Final evaluation
     while True:
         state, done = env.reset(start_evaluation=True), False
         while not done:
-            action = np.argmax(get_q(state))
+            action = np.argmax(target_network.get_q(state))
             state, reward, done, _ = env.step(action)
 
 
