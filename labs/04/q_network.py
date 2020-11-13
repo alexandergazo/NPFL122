@@ -44,17 +44,6 @@ class Network:
             model.compile(loss=tf.keras.losses.MeanSquaredError(), optimizer='adam')
         self._model = model
 
-    # Define a training method. Generally you have two possibilities
-    # - pass new q_values of all actions for a given state; all but one are the same as before
-    # - pass only one new q_value for a given state, and include the index of the action to which
-    #   the new q_value belongs
-    # The code below implements the first option, but you can change it if you want.
-    # Also note that we need to use @tf.function for efficiency (using `train_on_batch`
-    # on extremely small batches/networks has considerable overhead).
-    #
-    # The `wrappers.typed_np_function` automatically converts input arguments
-    # to NumPy arrays of given type, and converts the result to a NumPy array.
-    @wrappers.typed_np_function(np.float32, np.float32)
     @tf.function
     def train(self, states, q_values):
         self._model.optimizer.minimize(
@@ -62,7 +51,6 @@ class Network:
             var_list=self._model.trainable_variables
         )
 
-    # Predict method, again with manual @tf.function for efficiency.
     @wrappers.typed_np_function(np.float32)
     @tf.function
     def predict(self, states):
@@ -71,8 +59,6 @@ class Network:
     def get_q(self, state):
         return self.predict(np.asarray([state], np.float32))[0]
 
-    # If you want to use target network, the following method copies weights from
-    # a given Network to the current one.
     @tf.function
     def copy_weights_from(self, other):
         for var, other_var in zip(self._model.variables, other._model.variables):
@@ -113,8 +99,10 @@ def main(env, args):
                     transitions = random.sample(replay_buffer, args.batch_size)
                     states = np.asarray([t.state for t in transitions])
                     q_values = network.predict(states).numpy()
-                    targets = [t.reward + (1 - t.done) * args.gamma * np.max(target_network.get_q(t.next_state)) \
-                               for t in transitions]
+                    targets = [t.reward + \
+                                    (1 - t.done) * args.gamma * \
+                                    target_network.get_q(t.next_state)[np.argmax(network.get_q(t.next_state))] \
+                                for t in transitions]
                     actions = [t.action for t in transitions]
                     q_values[np.arange(len(actions)), actions] = targets
                     network.train(states, q_values)
