@@ -1,3 +1,6 @@
 [submodule "slides/slimd"]
 	path = slides/slimd
 	url = https://github.com/ufal/slimd
+[submodule "labs/05/Rainbow"]
+	path = labs/05/Rainbow
+	url = git@github.com:Kaixhin/Rainbow.git
