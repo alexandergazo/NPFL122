@@ -57,7 +57,7 @@ class EvaluationWrapper(gym.Wrapper):
                     self._evaluate_for, np.mean(self._episode_returns[-self._evaluate_for:]),
                     np.std(self._episode_returns[-self._evaluate_for:]), file=sys.stderr))
                 self.close()
-                sys.exit(0)
+                # sys.exit(0)
 
         return observation, reward, done, info
 
