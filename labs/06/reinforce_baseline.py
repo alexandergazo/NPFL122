@@ -26,9 +26,6 @@ parser.add_argument("--model_path", default="baseline_model.h5", type=str, help=
 parser.add_argument("--baseline_path", default="baseline_baseline.h5", type=str, help="Path to trained baseline.")
 
 class Network:
-        # Apart from the model defined in `reinforce`, define also another
-        # model for computing baseline (with one output, using a dense layer
-        # without activation).
     def __init__(self, env, args, model=None, baseline=None):
         if model is None:
             model = tf.keras.Sequential()
