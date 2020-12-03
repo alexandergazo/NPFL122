@@ -20,7 +20,7 @@ parser.add_argument("--grid_search", default=False, action="store_true", help="U
 parser.add_argument("--batch_size", default=1, type=int, help="Batch size.")
 parser.add_argument("--episodes", default=200, type=int, help="Training episodes.")
 parser.add_argument("--gamma", default=0.99, type=float, help="Discounting factor.")
-parser.add_argument("--hidden_layer_size", default=20, type=int, help="Size of hidden layer.")
+parser.add_argument("--hidden_layer_size", default=50, type=int, help="Size of hidden layer.")
 parser.add_argument("--learning_rate", default=0.01, type=float, help="Learning rate.")
 parser.add_argument("--model_path", default="baseline_model.h5", type=str, help="Path to trained model.")
 parser.add_argument("--baseline_path", default="baseline_baseline.h5", type=str, help="Path to trained baseline.")
@@ -28,19 +28,22 @@ parser.add_argument("--baseline_path", default="baseline_baseline.h5", type=str,
 class Network:
     def __init__(self, env, args, model=None, baseline=None):
         if model is None:
-            model = tf.keras.Sequential()
-            model.add(tf.keras.Input(shape=env.observation_space.shape))
-            model.add(tf.keras.layers.Dense(args.hidden_layer_size, activation='relu'))
-            model.add(tf.keras.layers.Dense(env.action_space.n, activation='softmax'))
-            model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(), optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate))
+            inputs = tf.keras.Input(shape=env.observation_space.shape)
+            model = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(inputs)
+            model = tf.keras.layers.Dense(env.action_space.n, activation='softmax')(model)
+            model = tf.keras.Model(inputs=inputs, outputs=model)
+            model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+                          optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate))
         if baseline is None:
-            baseline = tf.keras.Sequential()
-            baseline.add(tf.keras.Input(shape=env.observation_space.shape))
-            baseline.add(tf.keras.layers.Dense(args.hidden_layer_size, activation='relu'))
-            baseline.add(tf.keras.layers.Dense(1))
-            baseline.compile(loss=tf.keras.losses.MeanSquaredError(), optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate))
+            inputs = tf.keras.Input(shape=env.observation_space.shape)
+            baseline = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(inputs)
+            baseline = tf.keras.layers.Dense(1)(baseline)
+            baseline = tf.keras.Model(inputs=inputs, outputs=baseline)
+            baseline.compile(loss=tf.keras.losses.MeanSquaredError(),
+                             optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate))
         self._model = model
         self._baseline = baseline
+
 
     @wrappers.typed_np_function(np.float32, np.int32, np.float32)
     @tf.function(experimental_relax_shapes=True)
@@ -53,6 +56,7 @@ class Network:
             lambda: self._baseline.loss(returns, tf.squeeze(self._baseline(states, training=True))),
             var_list=self._baseline.trainable_variables)
 
+
     # Predict method, again with manual @tf.function for efficiency.
     @wrappers.typed_np_function(np.float32)
     @tf.function
@@ -63,47 +67,43 @@ class Network:
 def main(env, args):
     tf.config.threading.set_inter_op_parallelism_threads(args.threads)
     tf.config.threading.set_intra_op_parallelism_threads(args.threads)
-    model, baseline = None, None
-    if os.path.isfile(args.baseline_path):
-        baseline = tf.keras.models.load_model(args.baseline_path)
-    if os.path.isfile(args.model_path):
-        model = tf.keras.models.load_model(args.model_path)
-    network = Network(env, args, model, baseline)
-    if model is None or baseline is None:
-        # Fix random seeds and number of threads
-        np.random.seed(args.seed)
-        tf.random.set_seed(args.seed)
 
-        # Training
-        for _ in range(args.episodes // args.batch_size):
-            batch_states, batch_actions, batch_returns = [], [], []
-            for _ in range(args.batch_size):
-                # Perform episode
-                states, actions, rewards = [], [], []
-                state, done = env.reset(), False
-                while not done:
-                    state = state.tolist()
-                    if args.render_each and env.episode > 0 and env.episode % args.render_each == 0:
-                        env.render()
+    # Fix random seeds and number of threads
+    np.random.seed(args.seed)
+    tf.random.set_seed(args.seed)
 
-                    action = np.random.choice(env.action_space.n, p=network.predict([state])[0])
+    network = Network(env, args)
 
-                    next_state, reward, done, _ = env.step(action)
+    # Training
+    for _ in range(args.episodes // args.batch_size):
+        batch_states, batch_actions, batch_returns = [], [], []
+        for _ in range(args.batch_size):
+            # Perform episode
+            states, actions, rewards = [], [], []
+            state, done = env.reset(), False
+            while not done:
+                state = state.tolist()
+                if args.render_each and env.episode > 0 and env.episode % args.render_each == 0:
+                    env.render()
 
-                    states.append(state)
-                    actions.append(action)
-                    rewards.append(reward)
+                action = np.random.choice(env.action_space.n, p=network.predict([state])[0])
 
-                    state = next_state
+                next_state, reward, done, _ = env.step(action)
 
-                gammas = args.gamma ** np.arange(len(rewards))
-                returns = [np.dot(rewards[i:], gammas[:len(gammas) - i]) for i in range(len(rewards))]
+                states.append(state)
+                actions.append(action)
+                rewards.append(reward)
 
-                batch_states.extend(states)
-                batch_actions.extend(actions)
-                batch_returns.extend(returns)
+                state = next_state
 
-            network.train(np.array(batch_states), np.array(batch_actions), np.array(batch_returns))
+            gammas = args.gamma ** np.arange(len(rewards))
+            returns = [np.dot(rewards[i:], gammas[:len(gammas) - i]) for i in range(len(rewards))]
+
+            batch_states.extend(states)
+            batch_actions.extend(actions)
+            batch_returns.extend(returns)
+
+        network.train(np.array(batch_states), np.array(batch_actions), np.array(batch_returns))
 
     # Final evaluation
     while True:
