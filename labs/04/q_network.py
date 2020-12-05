@@ -51,7 +51,6 @@ class Network:
             var_list=self._model.trainable_variables
         )
 
-    @wrappers.typed_np_function(np.float32)
     @tf.function
     def predict(self, states):
         return self._model(states)
