@@ -21,7 +21,7 @@ parser.add_argument("--batch_size", default=100, type=int, help="Batch size.")
 parser.add_argument("--evaluate_each", default=100, type=int, help="Evaluate each number of episodes.")
 parser.add_argument("--evaluate_for", default=100, type=int, help="Evaluate the given number of episodes.")
 parser.add_argument("--gamma", default=0.99, type=float, help="Discounting factor.")
-parser.add_argument("--hidden_layer_size", default=100, type=int, help="Size of hidden layer.")
+parser.add_argument("--hidden_layer_size", default=50, type=int, help="Size of hidden layer.")
 parser.add_argument("--learning_rate", default=0.001, type=float, help="Learning rate.")
 parser.add_argument("--noise_sigma", default=0.05, type=float, help="UB noise sigma.")
 parser.add_argument("--noise_theta", default=0.15, type=float, help="UB noise theta.")
@@ -35,7 +35,7 @@ parser.add_argument("--policy_noise_sigma", default=0.05, type=float, help='Poli
 
 def get_scaled_tanh(low=-1, high=1):
     from tensorflow.keras.activations import sigmoid, tanh
-    if low==-1 and high==1:
+    if np.all(low==-1) and np.all(high==1):
         return tanh
     else:
         return lambda x: sigmoid(2 * x) * (high - low) + low
@@ -47,12 +47,7 @@ class Network:
         self.c = args.policy_noise_clip
         self.sigma = args.policy_noise_sigma
 
-        if np.unique(env.action_space.low).shape[0] == 1 and np.unique(
-            env.action_space.high).shape[0] == 1:
-            low = np.unique(env.action_space.low)[0]
-            high = np.unique(env.action_space.high)[0]
-        else:
-            raise NotImplementedError()
+        low, high = env.action_space.low, env.action_space.high
 
         inputs = tf.keras.Input(shape=env.observation_space.shape)
 
@@ -70,7 +65,7 @@ class Network:
         critic = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(critic)
         critic = tf.keras.layers.Dense(1)(critic)
         self.critic = tf.keras.Model(inputs=[inputs, action_inputs], outputs=critic)
-        self.critic2 = tf.keras.models.clone_model(self.actor)
+        self.critic2 = tf.keras.models.clone_model(self.critic)
         self.critic.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate),
                             loss=tf.keras.losses.MeanSquaredError())
         self.critic2.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate),
@@ -105,6 +100,8 @@ class Network:
 
         for var, target_var in zip(self.critic.trainable_variables, self.target_critic.trainable_variables):
             target_var.assign(target_var * (1 - self.target_tau) + var * self.target_tau)
+        for var, target_var in zip(self.critic2.trainable_variables, self.target_critic2.trainable_variables):
+            target_var.assign(target_var * (1 - self.target_tau) + var * self.target_tau)
         for var, target_var in zip(self.actor.trainable_variables, self.target_actor.trainable_variables):
             target_var.assign(target_var * (1 - self.target_tau) + var * self.target_tau)
 
@@ -127,7 +124,7 @@ class Network:
         actor = self.target_actor(states)
         noise = np.clip(self.rng.normal(scale=self.sigma, size=actor.shape), -self.c, self.c)
         critic = self.target_critic([states, actor + noise])
-        critic2 = self.target_critic([states, actor + noise])
+        critic2 = self.target_critic2([states, actor + noise])
         return tf.minimum(critic, critic2)
 
 
