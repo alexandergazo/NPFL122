@@ -17,26 +17,59 @@ parser.add_argument("--render_each", default=0, type=int, help="Render some epis
 parser.add_argument("--seed", default=None, type=int, help="Random seed.")
 parser.add_argument("--threads", default=4, type=int, help="Maximum number of threads to use.")
 # For these and any other arguments you add, ReCodEx will keep your default value.
+parser.add_argument("--env", default="BipedalWalker-v3", type=str, help="OpenAI Gym environment.")
 parser.add_argument("--batch_size", default=100, type=int, help="Batch size.")
-parser.add_argument("--evaluate_each", default=100, type=int, help="Evaluate each number of episodes.")
+parser.add_argument("--evaluate_each", default=400, type=int, help="Evaluate each number of episodes.")
 parser.add_argument("--evaluate_for", default=100, type=int, help="Evaluate the given number of episodes.")
 parser.add_argument("--gamma", default=0.99, type=float, help="Discounting factor.")
 parser.add_argument("--hidden_layer_size", default=100, type=int, help="Size of hidden layer.")
 parser.add_argument("--learning_rate", default=0.001, type=float, help="Learning rate.")
 parser.add_argument("--target_tau", default=0.005, type=float, help="Target network update weight.")
 parser.add_argument("--pass_limit", default=100, type=int, help="Stop evaluation after reaching.")
-parser.add_argument("--max_buffer_size", default=10000, type=int, help="Buffer size limit.")
+parser.add_argument("--max_buffer_size", default=500000, type=int, help="Buffer size limit.")
 parser.add_argument("--delay_freq", default=2, type=int, help="Delay parameter.")
 parser.add_argument("--exploration_noise_sigma", default=0.1, type=float, help="UB noise sigma.")
 parser.add_argument("--policy_noise_sigma", default=0.2, type=float, help='Policy smoothing sigma.')
 parser.add_argument("--policy_noise_clip", default=0.5, type=float, help='Policy smoothing clip.')
-parser.add_argument("--train", default=False, action="store_true", help="Training.")
-parser.add_argument("--model", default="vanilla_tanh_model", type=str, help='Saved model identifier.')
+parser.add_argument("--test", default=False, action="store_true", help="Testing.")
+parser.add_argument("--load_model", default=None, type=str, help='Load model identifier.')
+parser.add_argument("--save_model", default=None, type=str, help='Save model identifier.')
 
 
 class Network:
     def __init__(self, env, args, rng, actor=None, target_actor=None,
                  critic=None, critic2=None, target_critic=None, target_critic2=None):
+
+        def get_actor(hidden_layer_units=[400, 300]):
+            inputs = tf.keras.Input(shape=env.observation_space.shape)
+
+            actor = tf.keras.layers.Dense(hidden_layer_units[0], activation='relu')(inputs)
+            for units in hidden_layer_units[1:]:
+                actor = tf.keras.layers.Dense(units, activation='relu')(actor)
+
+            actor = tf.keras.layers.Dense(env.action_space.shape[0], activation='tanh')(actor)
+            actor = actor * (high - low) / 2 + (high + low) / 2
+            
+            actor = tf.keras.Model(inputs=inputs, outputs=actor)
+            actor.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate))
+            return actor
+
+        def get_critic(hidden_layer_units=[400, 300]):
+            inputs = tf.keras.Input(shape=env.observation_space.shape)
+            action_inputs = tf.keras.Input(shape=env.action_space.shape)
+
+            critic = tf.keras.layers.concatenate([inputs, action_inputs])
+
+            for units in hidden_layer_units:
+                critic = tf.keras.layers.Dense(units, activation='relu')(critic)
+
+            critic = tf.keras.layers.Dense(1)(critic)
+
+            critic = tf.keras.Model(inputs=[inputs, action_inputs], outputs=critic)
+            critic.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate),
+                           loss=tf.keras.losses.MeanSquaredError())
+            return critic
+
         self.target_tau = args.target_tau
         self.rng = rng
         self.c = args.policy_noise_clip
@@ -44,60 +77,16 @@ class Network:
 
         low, high = env.action_space.low, env.action_space.high
 
-        inputs = tf.keras.Input(shape=env.observation_space.shape)
-
-        if actor is None:
-            actor = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(inputs)
-            actor = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(actor)
-            actor = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(actor)
-
-            # TEST ===========================================
-            actor = tf.keras.layers.Dense(400, activation='relu')(inputs)
-            actor = tf.keras.layers.Dense(300, activation='relu')(actor)
-            # END TEST =======================================
-
-            actor = tf.keras.layers.Dense(env.action_space.shape[0], activation='tanh')(actor)
-            actor = actor * (high - low) / 2 + (high + low) / 2
-            self.actor = tf.keras.Model(inputs=inputs, outputs=actor)
-            self.actor.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate))
-        else:
-            self.actor = actor
-
-        if (critic is None and critic2 is not None) or (critic is not None and critic2 is None):
-            raise NotImplementedError()
-
-        if critic is None:
-            critic = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(inputs)
-            critic = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(critic)
-            action_inputs = tf.keras.Input(shape=env.action_space.shape)
-            critic = tf.keras.layers.concatenate([critic, action_inputs])
-            critic = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(critic)
-            critic = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(critic)
-            critic = tf.keras.layers.Dense(args.hidden_layer_size, activation='relu')(critic)
-            
-            # TEST =============================================
-            critic = tf.keras.layers.concatenate([inputs, action_inputs])
-            critic = tf.keras.layers.Dense(400, activation='relu')(critic)
-            critic = tf.keras.layers.Dense(300, activation='relu')(critic)
-            # END TEST ==========================================
-
-            critic = tf.keras.layers.Dense(1)(critic)
-            self.critic = tf.keras.Model(inputs=[inputs, action_inputs], outputs=critic)
-            self.critic2 = tf.keras.models.clone_model(self.critic)
-            self.critic.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate),
-                                loss=tf.keras.losses.MeanSquaredError())
-            self.critic2.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate),
-                                 loss=tf.keras.losses.MeanSquaredError())
-        else:
-            self.critic = critic
-            self.ctitic2 = critic2
+        self.actor = get_actor() if actor is None else actor
+        self.critic = get_critic() if critic is None else critic
+        self.critic2 = get_critic() if critic2 is None else critic2
 
         self.target_actor = tf.keras.models.clone_model(self.actor) if target_actor is None else target_actor
         self.target_critic = tf.keras.models.clone_model(self.critic) if target_critic is None else target_critic
         self.target_critic2 = tf.keras.models.clone_model(self.critic2) if target_critic2 is None else target_critic2
 
 
-    # the functions are split due to unresolved bug in tensorflow #34983
+    # the training functions are split due to unresolved bug in tensorflow #34983
     @wrappers.typed_np_function(np.float32, np.float32, np.float32)
     @tf.function
     def train_critics(self, states, actions, returns):
@@ -148,8 +137,8 @@ class Network:
         self.target_actor.save(file_name + ".target_actor.h5")
         self.critic.save(file_name + ".critic.h5")
         self.critic2.save(file_name + ".critic2.h5")
-        self.target_critic.save(file_name + ".target_critc.h5")
-        self.target_critic2.save(file_name + ".target_critc2.h5")
+        self.target_critic.save(file_name + ".target_critic.h5")
+        self.target_critic2.save(file_name + ".target_critic2.h5")
 
 
     @staticmethod
@@ -159,8 +148,8 @@ class Network:
         target_actor = tf.keras.models.load_model(file_name + ".target_actor.h5")
         critic = tf.keras.models.load_model(file_name + ".critic.h5")
         critic2 = tf.keras.models.load_model(file_name + ".critic2.h5")
-        target_critic = tf.keras.models.load_model(file_name + ".target_critc.h5")
-        target_critic2 = tf.keras.models.load_model(file_name + ".target_critc2.h5")
+        target_critic = tf.keras.models.load_model(file_name + ".target_critic.h5")
+        target_critic2 = tf.keras.models.load_model(file_name + ".target_critic2.h5")
         return Network(env, args, rng, actor, target_actor,
                        critic, critic2, target_critic, target_critic2)
 
@@ -183,12 +172,14 @@ def main(env, args):
             rewards += reward
         return rewards
 
-    if args.model and not args.train:
+    if args.load_model:
         network = Network.load_from_files(args.model, env, args, rng)
+    else:
+        network = Network(env, args, rng)
+        
+    if args.test:
         while True: evaluate_episode(start_evaluation=True)
         return
-
-    network = Network(env, args, rng)
 
     replay_buffer = collections.deque(maxlen=args.max_buffer_size)
     Transition = collections.namedtuple("Transition", ["state", "action", "reward", "done", "next_state"])
@@ -203,25 +194,26 @@ def main(env, args):
                 action = action.clip(env.action_space.low, env.action_space.high)
 
                 next_state, reward, done, _ = env.step(action)
-                replay_buffer.append(Transition(state, action, reward, done, next_state))
-                state = next_state
-
                 # TEST =====================================
                 if abs(next_state[2]) < 0.001:
                     reward = -100
                     done = True
                 # END TEST ================================
+                replay_buffer.append(Transition(state, action, reward, done, next_state))
+                state = next_state
 
                 if len(replay_buffer) >= args.batch_size:
                     batch = rng.choice(len(replay_buffer), size=args.batch_size, replace=False)
                     states, actions, rewards, dones, next_states = map(np.array, zip(*[replay_buffer[i] for i in batch]))
                     returns = rewards + args.gamma * (~dones) * network.predict_values(next_states).flatten()
-                    network.train_critics(states, actions, returns.reshape(-1, 1))
 
+                    network.train_critics(states, actions, returns.reshape(-1, 1))
                     if timestep % args.delay_freq == 0:
                         network.train_actor_and_targets(states, actions, returns.reshape(-1, 1))
 
                 timestep += 1
+
+            print(timestep)
 
         # Periodic evaluation
         for _ in range(args.evaluate_for):
@@ -231,8 +223,8 @@ def main(env, args):
             training = False
 
     print(args)
-    if args.model:
-        network.save(args.model)
+    if args.save_model:
+        network.save(args.save_model)
 
 
 if __name__ == "__main__":
@@ -240,6 +232,6 @@ if __name__ == "__main__":
 
     print(args)
     # Create the environment
-    env = wrappers.EvaluationWrapper(gym.make("BipedalWalker-v3"), args.seed)
+    env = wrappers.EvaluationWrapper(gym.make(args.env), args.seed)
 
     main(env, args)
