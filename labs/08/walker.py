@@ -25,10 +25,10 @@ parser.add_argument("--gamma", default=0.99, type=float, help="Discounting facto
 parser.add_argument("--hidden_layer_size", default=100, type=int, help="Size of hidden layer.")
 parser.add_argument("--learning_rate", default=0.001, type=float, help="Learning rate.")
 parser.add_argument("--target_tau", default=0.005, type=float, help="Target network update weight.")
-parser.add_argument("--pass_limit", default=100, type=int, help="Stop evaluation after reaching.")
+parser.add_argument("--pass_limit", default=290, type=int, help="Stop evaluation after reaching.")
 parser.add_argument("--max_buffer_size", default=500000, type=int, help="Buffer size limit.")
 parser.add_argument("--delay_freq", default=2, type=int, help="Delay parameter.")
-parser.add_argument("--exploration_noise_sigma", default=0.1, type=float, help="UB noise sigma.")
+parser.add_argument("--exploration_noise_sigma", default=0.1, type=float, help="Exploration noise sigma.")
 parser.add_argument("--policy_noise_sigma", default=0.2, type=float, help='Policy smoothing sigma.')
 parser.add_argument("--policy_noise_clip", default=0.5, type=float, help='Policy smoothing clip.')
 parser.add_argument("--test", default=False, action="store_true", help="Testing.")
@@ -173,7 +173,7 @@ def main(env, args):
         return rewards
 
     if args.load_model:
-        network = Network.load_from_files(args.model, env, args, rng)
+        network = Network.load_from_files(args.load_model, env, args, rng)
     else:
         network = Network(env, args, rng)
         
@@ -194,26 +194,31 @@ def main(env, args):
                 action = action.clip(env.action_space.low, env.action_space.high)
 
                 next_state, reward, done, _ = env.step(action)
+
+                reward = 0 if reward == -100 else reward
                 # TEST =====================================
-                if abs(next_state[2]) < 0.001:
-                    reward = -100
-                    done = True
+                # if abs(next_state[2]) < 0.001:
+                #     reward = -100
+                #     done = True
                 # END TEST ================================
+
                 replay_buffer.append(Transition(state, action, reward, done, next_state))
+                
                 state = next_state
-
-                if len(replay_buffer) >= args.batch_size:
-                    batch = rng.choice(len(replay_buffer), size=args.batch_size, replace=False)
-                    states, actions, rewards, dones, next_states = map(np.array, zip(*[replay_buffer[i] for i in batch]))
-                    returns = rewards + args.gamma * (~dones) * network.predict_values(next_states).flatten()
-
-                    network.train_critics(states, actions, returns.reshape(-1, 1))
-                    if timestep % args.delay_freq == 0:
-                        network.train_actor_and_targets(states, actions, returns.reshape(-1, 1))
-
                 timestep += 1
 
             print(timestep)
+
+            if len(replay_buffer) <= args.batch_size: continue
+
+            for i in range(timestep):
+                batch = rng.choice(len(replay_buffer), size=args.batch_size, replace=False)
+                states, actions, rewards, dones, next_states = map(np.array, zip(*[replay_buffer[i] for i in batch]))
+                returns = rewards + args.gamma * (~dones) * network.predict_values(next_states).flatten()
+
+                network.train_critics(states, actions, returns.reshape(-1, 1))
+                if i % args.delay_freq == 0:
+                    network.train_actor_and_targets(states, actions, returns.reshape(-1, 1))
 
         # Periodic evaluation
         for _ in range(args.evaluate_for):
@@ -223,8 +228,14 @@ def main(env, args):
             training = False
 
     print(args)
+    print("\nThe training is finished.")
+
     if args.save_model:
         network.save(args.save_model)
+    else:
+        name = input("No save location specified. Do you want to save model anyway? If yes, enter the model name, otherwise press enter.\n")
+        if name:
+            network.save(name)   
 
 
 if __name__ == "__main__":
