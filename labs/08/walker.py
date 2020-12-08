@@ -54,7 +54,7 @@ class Network:
 
             actor = tf.keras.layers.Dense(env.action_space.shape[0], activation='tanh')(actor)
             actor = actor * (high - low) / 2 + (high + low) / 2
-            
+
             actor = tf.keras.Model(inputs=inputs, outputs=actor)
             actor.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate))
             return actor
@@ -161,7 +161,7 @@ class Network:
 
 class ActorOnlyNetwork():
     def __init__(self, model_name):
-        self.actor = tf.keras.models.load_model(file_name + ".actor.h5")
+        self.actor = tf.keras.models.load_model(model_name + ".actor.h5")
 
     @wrappers.typed_np_function(np.float32)
     @tf.function
@@ -191,10 +191,10 @@ def main(env, args):
         args.test = True
         network = ActorOnlyNetwork(args.test_actor)
     elif args.load_model:
-        network = Network.load_from_files(args.load_model, env, args, rng)    
+        network = Network.load_from_files(args.load_model, env, args, rng)
     else:
-        network = Network(env, args, rng) 
-        
+        network = Network(env, args, rng)
+
     if args.test:
         while True: evaluate_episode(start_evaluation=True)
         return
@@ -221,7 +221,7 @@ def main(env, args):
                 reward = -10 if reward == -100 and args.no_penalty else reward
 
                 replay_buffer.append(Transition(state, action, reward, done, next_state))
-                
+
                 state = next_state
                 timestep += 1
 
@@ -243,7 +243,7 @@ def main(env, args):
 
         if performance > args.pass_limit:
             training = False
-            if args.save_model: 
+            if args.save_model:
                 network.save(args.save_model)
         elif args.save_model and args.save_limit is not None and performance >= args.save_limit:
             network.save(args.save_model + "{:.2f}".format(performance))
