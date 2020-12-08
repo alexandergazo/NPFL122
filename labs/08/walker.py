@@ -34,6 +34,9 @@ parser.add_argument("--policy_noise_clip", default=0.5, type=float, help='Policy
 parser.add_argument("--test", default=False, action="store_true", help="Testing.")
 parser.add_argument("--load_model", default=None, type=str, help='Load model identifier.')
 parser.add_argument("--save_model", default=None, type=str, help='Save model identifier.')
+parser.add_argument("--no_penalty", default=False, action="store_true", help="Don't use penalty on falling (walker env).")
+parser.add_argument("--min_buffer_size", default=0, type=int, help="Minimal buffer size needed for training.")
+parser.add_argument("--save_limit", default=None, type=float, help="Save every time evaluation performs better than this limit.")
 
 
 class Network:
@@ -195,12 +198,7 @@ def main(env, args):
 
                 next_state, reward, done, _ = env.step(action)
 
-                reward = 0 if reward == -100 else reward
-                # TEST =====================================
-                # if abs(next_state[2]) < 0.001:
-                #     reward = -100
-                #     done = True
-                # END TEST ================================
+                reward = 0 if reward == -100 and args.no_penalty else reward
 
                 replay_buffer.append(Transition(state, action, reward, done, next_state))
                 
@@ -209,7 +207,7 @@ def main(env, args):
 
             print(timestep)
 
-            if len(replay_buffer) <= args.batch_size: continue
+            if len(replay_buffer) <= max(args.min_buffer_size, args.batch_size): continue
 
             for i in range(timestep):
                 batch = rng.choice(len(replay_buffer), size=args.batch_size, replace=False)
@@ -225,6 +223,10 @@ def main(env, args):
             evaluate_episode()
 
         if np.mean(env._episode_returns[-args.evaluate_for:]) > args.pass_limit:
+            training = False
+
+        if args.save_limit is not None and np.mean(env._episode_returns[-args.evaluate_for:]) >= args.save_limit:
+            network.save(args.save_model + "{:.2f}".format(np.mean(env._episode_returns[-args.evaluate_for:])))
             training = False
 
     print(args)
