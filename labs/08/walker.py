@@ -38,6 +38,7 @@ parser.add_argument("--no_penalty", default=False, action="store_true", help="Do
 parser.add_argument("--min_buffer_size", default=0, type=int, help="Minimal buffer size needed for training.")
 parser.add_argument("--save_limit", default=None, type=float, help="Save every time evaluation performs better than this limit.")
 parser.add_argument("--print_episode_length", default=False, action="store_true", help="After each training episode print its length.")
+parser.add_argument("--test_actor", default=None, type=str, help="Name of the tested model. Only <model_name>.actor.h5 is required.")
 
 
 class Network:
@@ -158,6 +159,16 @@ class Network:
                        critic, critic2, target_critic, target_critic2)
 
 
+class ActorOnlyNetwork():
+    def __init__(self, model_name):
+        self.actor = tf.keras.models.load_model(file_name + ".actor.h5")
+
+    @wrappers.typed_np_function(np.float32)
+    @tf.function
+    def predict_actions(self, states):
+        return self.actor(states)
+
+
 def main(env, args):
     # Fix random seeds and number of threads
     rng = np.random.default_rng(args.seed)
@@ -176,10 +187,13 @@ def main(env, args):
             rewards += reward
         return rewards
 
-    if args.load_model:
-        network = Network.load_from_files(args.load_model, env, args, rng)
+    if args.test_actor:
+        args.test = True
+        network = ActorOnlyNetwork(args.test_actor)
+    elif args.load_model:
+        network = Network.load_from_files(args.load_model, env, args, rng)    
     else:
-        network = Network(env, args, rng)
+        network = Network(env, args, rng) 
         
     if args.test:
         while True: evaluate_episode(start_evaluation=True)
@@ -204,7 +218,7 @@ def main(env, args):
 
                 next_state, reward, done, _ = env.step(action)
 
-                reward = 0 if reward == -100 and args.no_penalty else reward
+                reward = -10 if reward == -100 and args.no_penalty else reward
 
                 replay_buffer.append(Transition(state, action, reward, done, next_state))
                 
