@@ -37,6 +37,7 @@ parser.add_argument("--save_model", default=None, type=str, help='Save model ide
 parser.add_argument("--no_penalty", default=False, action="store_true", help="Don't use penalty on falling (walker env).")
 parser.add_argument("--min_buffer_size", default=0, type=int, help="Minimal buffer size needed for training.")
 parser.add_argument("--save_limit", default=None, type=float, help="Save every time evaluation performs better than this limit.")
+parser.add_argument("--print_episode_length", default=False, action="store_true", help="After each training episode print its length.")
 
 
 class Network:
@@ -184,6 +185,11 @@ def main(env, args):
         while True: evaluate_episode(start_evaluation=True)
         return
 
+    # TRAINING
+
+    if not args.save_model:
+        args.save_model = input("No save location specified. Do you want to save model anyway? If yes, enter the model name, otherwise press enter.\n")
+
     replay_buffer = collections.deque(maxlen=args.max_buffer_size)
     Transition = collections.namedtuple("Transition", ["state", "action", "reward", "done", "next_state"])
 
@@ -205,7 +211,7 @@ def main(env, args):
                 state = next_state
                 timestep += 1
 
-            print(timestep)
+            if args.print_episode_length: print(timestep)
 
             if len(replay_buffer) <= max(args.min_buffer_size, args.batch_size): continue
 
@@ -219,22 +225,17 @@ def main(env, args):
                     network.train_actor_and_targets(states, actions, returns.reshape(-1, 1))
 
         # Periodic evaluation
-        performance = np.mean(evaluate_episode() for _ in range(args.evaluate_for))
+        performance = np.mean([evaluate_episode() for _ in range(args.evaluate_for)])
 
         if performance > args.pass_limit:
             training = False
-        elif args.save_limit is not None and performance >= args.save_limit:
+            if args.save_model: 
+                network.save(args.save_model)
+        elif args.save_model and args.save_limit is not None and performance >= args.save_limit:
             network.save(args.save_model + "{:.2f}".format(performance))
 
     print(args)
     print("\nThe training is finished.")
-
-    if args.save_model:
-        network.save(args.save_model)
-    else:
-        name = input("No save location specified. Do you want to save model anyway? If yes, enter the model name, otherwise press enter.\n")
-        if name:
-            network.save(name)   
 
 
 if __name__ == "__main__":
