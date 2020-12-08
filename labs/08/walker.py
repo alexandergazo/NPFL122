@@ -219,15 +219,12 @@ def main(env, args):
                     network.train_actor_and_targets(states, actions, returns.reshape(-1, 1))
 
         # Periodic evaluation
-        for _ in range(args.evaluate_for):
-            evaluate_episode()
+        performance = np.mean(evaluate_episode() for _ in range(args.evaluate_for))
 
-        if np.mean(env._episode_returns[-args.evaluate_for:]) > args.pass_limit:
+        if performance > args.pass_limit:
             training = False
-
-        if args.save_limit is not None and np.mean(env._episode_returns[-args.evaluate_for:]) >= args.save_limit:
-            network.save(args.save_model + "{:.2f}".format(np.mean(env._episode_returns[-args.evaluate_for:])))
-            training = False
+        elif args.save_limit is not None and performance >= args.save_limit:
+            network.save(args.save_model + "{:.2f}".format(performance))
 
     print(args)
     print("\nThe training is finished.")
