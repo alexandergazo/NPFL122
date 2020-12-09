@@ -39,6 +39,7 @@ parser.add_argument("--min_buffer_size", default=0, type=int, help="Minimal buff
 parser.add_argument("--save_limit", default=None, type=float, help="Save every time evaluation performs better than this limit.")
 parser.add_argument("--print_episode_length", default=False, action="store_true", help="After each training episode print its length.")
 parser.add_argument("--test_actor", default=None, type=str, help="Name of the tested model. Only <model_name>.actor.h5 is required.")
+parser.add_argument("--save_actor_only", default=False, action="store_true", help="Save only the actor model without optimizer.")
 
 
 class Network:
@@ -137,8 +138,9 @@ class Network:
         return tf.minimum(critic, critic2)
 
 
-    def save(self, file_name):
-        self.actor.save(file_name + ".actor.h5")
+    def save(self, file_name, save_actor_only=False):
+        self.actor.save(file_name + ".actor.h5", include_optimizer=not save_actor_only)
+        if save_actor_only: return
         self.target_actor.save(file_name + ".target_actor.h5")
         self.critic.save(file_name + ".critic.h5")
         self.critic2.save(file_name + ".critic2.h5")
@@ -244,9 +246,9 @@ def main(env, args):
         if performance > args.pass_limit:
             training = False
             if args.save_model:
-                network.save(args.save_model)
+                network.save(args.save_model, save_actor_only=args.save_actor_only)
         elif args.save_model and args.save_limit is not None and performance >= args.save_limit:
-            network.save(args.save_model + "{:.2f}".format(performance))
+            network.save(args.save_model + "{:.2f}".format(performance), save_actor_only=args.save_actor_only)
 
     print(args)
     print("\nThe training is finished.")
@@ -257,6 +259,6 @@ if __name__ == "__main__":
 
     print(args)
     # Create the environment
-    env = wrappers.EvaluationWrapper(gym.make(args.env), args.seed)
+    env = wrappers.EvaluationWrapper(gym.make(args.env), args.seed, evaluate_for=args.evaluate_for)
 
     main(env, args)
